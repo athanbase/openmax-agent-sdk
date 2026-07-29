@@ -12,9 +12,10 @@
 // (plain timestamps, useful for debugging expiry — not secrets) and any
 // unrelated field that merely contains those words in its name.
 const SENSITIVE_KEYS = new Set([
-  'access_token', 'refresh_token', 'id_token',
+  'access_token', 'refresh_token', 'id_token', 'token',
+  'upload_token', 'verify_token',
   'api_key', 'apikey',
-  'client_secret', 'clientsecret',
+  'client_secret', 'clientsecret', 'app_secret',
   'password', 'secret', 'ticket',
 ]);
 
