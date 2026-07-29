@@ -61,6 +61,7 @@
 
 import { createHash } from 'node:crypto';
 import { cfAccessHeaders } from './cf-access.js';
+import { redactSecrets } from './redact.js';
 import { memoryStorage } from '../providers.js';
 
 const REFRESH_MARGIN_MS = 60_000;   // refresh when <60 s remain on access_token
@@ -279,7 +280,7 @@ export class TokenManager {
     if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
 
     if (rpcLogStdoutEnabled()) {
-      this._logger.log(`[rpc] → POST ${url} req: ${JSON.stringify(body)}`);
+      this._logger.log(`[rpc] → POST ${url} req: ${JSON.stringify(redactSecrets(body))}`);
     }
 
     // Fail-closed on cross-origin redirects so the Bearer credential is never
@@ -294,7 +295,8 @@ export class TokenManager {
     try { data = JSON.parse(text); } catch { data = text; }
 
     if (rpcLogStdoutEnabled()) {
-      const bodyStr = typeof data === 'string' ? data : JSON.stringify(data);
+      const redacted = typeof data === 'string' ? data : redactSecrets(data);
+      const bodyStr = typeof redacted === 'string' ? redacted : JSON.stringify(redacted);
       const level = res.status >= 400 ? 'warn' : 'log';
       this._logger[level](`[rpc] ← POST ${url} resp ${res.status}: ${bodyStr}`);
     }

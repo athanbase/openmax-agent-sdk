@@ -1,6 +1,6 @@
 {
   "name": "@openmaxai/openmax-agent-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CWS agent runtime SDK — cws-comm protocol layer (WS/auth/heartbeat/reconnect, sync, message codec, tm/kb/as/comm/core/conn service clients) extracted from zylos-openmax; consumed by runtime adapters.",
   "type": "module",
   "main": "src/index.js",

@@ -42,6 +42,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { cfAccessHeaders } from './cf-access.js';
+import { redactSecrets } from './redact.js';
 
 // 401 → refresh-and-retry throttle window. Keyed by effective orgId. Records
 // the timestamp of the last 401-triggered refresh; subsequent 401s within the
@@ -275,7 +276,7 @@ export class CwsHttpClient {
   // ── RPC log emission (uses injected logger + file sink) ─────────────────────
   _logRpcRequest(method, url, body, orgId) {
     const tag = orgId ? `org=${orgId}` : '';
-    const bodyStr = body === undefined ? '(no body)' : JSON.stringify(body);
+    const bodyStr = body === undefined ? '(no body)' : JSON.stringify(redactSecrets(body));
     const line = `[rpc] → ${method} ${url} ${tag} req: ${bodyStr}`;
     if (rpcLogStdoutEnabled()) this._logger.log(line);
     appendRpcLine(line);
@@ -283,7 +284,7 @@ export class CwsHttpClient {
 
   _logRpcResponse(method, url, status, data) {
     let bodyStr;
-    try { bodyStr = typeof data === 'string' ? data : JSON.stringify(data); }
+    try { bodyStr = typeof data === 'string' ? data : JSON.stringify(redactSecrets(data)); }
     catch { bodyStr = String(data); }
     const line = `[rpc] ← ${method} ${url} resp ${status}: ${bodyStr}`;
     if (rpcLogStdoutEnabled()) {
