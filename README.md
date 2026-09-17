@@ -96,7 +96,16 @@ const { text, mentions } = await registry.resolveOutbound(raw, conversationId);
 await comm.send({ conversationId, content: text, mentions });        // or bridge.send(ep, text, { mentions })
 ```
 
-`resolveMentions(text, conversationId) → string` (canonicalization only) stays as it was. Note the request/response field asymmetry: the request element key is `member_id`, while get-message returns `mentioned_id` — sending `mentioned_id` is rejected with `validation failed`, and the error does not say which field.
+A name only matches when the handle actually ends there. A known short name must
+not be found inside a longer, unknown one: with only `Ann` on record, `@anna` and
+`@annabelle` resolve to nothing at all rather than to Ann — this is a wrong-person
+notification, not a cosmetic highlight. Separators continue a handle only when
+something follows them, so `@Ann.` at the end of a sentence still resolves while
+`@athan.chen` does not resolve for a registry that knows only `athan`. The rule is
+unicode-aware: `@张三丰` does not mention `张三`.
+
+`resolveMentions(text, conversationId) → string` keeps its signature and its
+canonicalization-only role, and shares that same boundary rule. Note the request/response field asymmetry: the request element key is `member_id`, while get-message returns `mentioned_id` — sending `mentioned_id` is rejected with `validation failed`, and the error does not say which field.
 
 ## Protocol contract (canonical, language-neutral)
 

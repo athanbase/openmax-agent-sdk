@@ -191,3 +191,58 @@ test('recordMembers ignores entries missing a name or an id', async () => {
   ]);
   assert.equal(await storage.get('mention-registry.json'), null);
 });
+
+// ── handle boundary: a known short name must not eat an unknown longer one ────
+
+test('a known short name does NOT match the prefix of an unknown longer handle', async () => {
+  // The failure this guards is not cosmetic: before the boundary check, a
+  // registry knowing only `Ann` rewrote `@anna` to `@Anna` and emitted Ann's
+  // member id, notifying someone who was never mentioned.
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'Ann', memberId: 'm-ann' }]);
+  assert.deepEqual(await reg.resolveOutbound('ping @anna', 'c1'), { text: 'ping @anna', mentions: [] });
+  assert.deepEqual(await reg.resolveOutbound('ping @annabelle', 'c1'), { text: 'ping @annabelle', mentions: [] });
+  // The same text must not be canonicalized either — the old API shares the rule.
+  assert.equal(await reg.resolveMentions('ping @anna', 'c1'), 'ping @anna');
+});
+
+test('a separator only continues a handle when something follows it', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'Ann', memberId: 'm-ann' }]);
+  // Sentence punctuation after a complete handle is not part of it.
+  assert.deepEqual((await reg.resolveOutbound('hi @Ann.', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-ann' }]);
+  // ...but a separator joined to more name characters is.
+  assert.deepEqual((await reg.resolveOutbound('hi @ann-lee', 'c1')).mentions, []);
+  assert.deepEqual((await reg.resolveOutbound('hi @ann_lee', 'c1')).mentions, []);
+});
+
+test('a dotted handle does not resolve to a registry that only knows its first segment', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'athan', memberId: 'm-athan' }]);
+  assert.deepEqual((await reg.resolveOutbound('ping @athan.chen', 'c1')).mentions, []);
+  assert.deepEqual((await reg.resolveOutbound('ping @athan', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-athan' }]);
+});
+
+test('the boundary rule is unicode-aware, not ascii-only', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: '张三', memberId: 'm-zhang' }]);
+  assert.deepEqual((await reg.resolveOutbound('ping @张三丰', 'c1')).mentions, []);
+  assert.deepEqual((await reg.resolveOutbound('ping @张三', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-zhang' }]);
+});
+
+test('a rejected prefix match does not consume the handle for a later, longer name', async () => {
+  // `Ann` is tried first only if it sorts first; either way the rejected span
+  // must stay available, or the real participant silently loses their mention.
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [
+    { displayName: 'Ann', memberId: 'm-ann' },
+    { displayName: 'Annabelle', memberId: 'm-belle' },
+  ]);
+  assert.deepEqual((await reg.resolveOutbound('ping @annabelle', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-belle' }]);
+  assert.deepEqual((await reg.resolveOutbound('ping @annabelle and @ann', 'c1')).mentions.map((m) => m.member_id).sort(),
+    ['m-ann', 'm-belle']);
+});

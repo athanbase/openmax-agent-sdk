@@ -53,6 +53,22 @@ const MAX_NAMES_PER_CONV = 200;
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
+// Does the handle keep going past `at`? A candidate `@name` match is only a real
+// mention if nothing after it could still belong to the same handle. Without this
+// a known short name matches the prefix of an UNKNOWN longer one — registry
+// {Ann} turns `@anna` into `@Anna` and notifies Ann, who was never mentioned.
+// Separators only continue a handle when something follows them, so `@Ann.` at
+// the end of a sentence still resolves while `@athan.chen` does not resolve to
+// a registry that only knows `athan`.
+const HANDLE_CHAR = /[\p{L}\p{N}]/u;
+function handleContinues(text, at) {
+  const c = text[at];
+  if (c === undefined) return false;
+  if (HANDLE_CHAR.test(c)) return true;
+  if (c === '.' || c === '_' || c === '-') return HANDLE_CHAR.test(text[at + 1] ?? '');
+  return false;
+}
+
 /**
  * Create a per-conversation @mention canonicalization registry backed by a
  * StorageProvider.
@@ -215,7 +231,8 @@ export function createMentionRegistry({
       // False positive: `esc` is the regex-metachar-escaped name (line above), so the
       // pattern is a literal `@name` — linear, no ReDoS. Lead-approved.
       // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
-      out = out.replace(new RegExp('@' + esc, 'gi'), '@' + name);
+      out = out.replace(new RegExp('@' + esc, 'gi'), (match, offset, whole) =>
+        handleContinues(whole, offset + match.length) ? match : '@' + name);
     }
     return out;
   }
@@ -263,10 +280,14 @@ export function createMentionRegistry({
       for (let from = 0; ; ) {
         const at = restLower.indexOf(token, from);
         if (at < 0) break;
+        const end = at + token.length;
+        // Not our handle — step past this `@` and keep looking rather than
+        // claiming (and masking) a span that belongs to a longer, unknown name.
+        if (handleContinues(restLower, end)) { from = at + 1; continue; }
         matched = true;
         const blank = ' '.repeat(token.length);
-        restLower = restLower.slice(0, at) + blank + restLower.slice(at + token.length);
-        from = at + token.length;
+        restLower = restLower.slice(0, at) + blank + restLower.slice(end);
+        from = end;
       }
       if (!matched) continue;
       const memberId = conv.ids[norm(name)];
