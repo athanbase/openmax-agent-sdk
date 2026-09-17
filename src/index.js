@@ -74,4 +74,4 @@ export * from './orchestrator.js';   // CwsAgentBridge
 // `../package.json` relative to the CONSUMER's bundle at runtime — which fails
 // when the bundle is loaded in isolation. The `SDK_VERSION` test asserts this
 // literal stays in sync with package.json, so it can never silently drift.
-export const SDK_VERSION = '1.0.3';
+export const SDK_VERSION = '1.1.0';

@@ -130,4 +130,11 @@ This package targets **Node.js only** (see `engines.node >= 20`). It is not publ
 
 ## Status
 
+`1.1.0` — **outbound `@mention` support on the send side.** `resolveOutbound`
+returns the canonicalized text and the structured rows for the request's
+top-level `mentions` array, the registry records member ids alongside display
+names (`recordMembers`), and `CommService.conversationMembers()` reads a roster.
+A name only matches where the handle actually ends, so a known short name cannot
+notify on a longer unknown one. See [Outbound @-mentions](#outbound--mentions).
+
 `1.0.0` — **first stable release. Phase A extraction complete**: transport, protocol, sync, services (tm/kb/as/comm/core/conn), reporters (agent-level), identity, and the `CwsAgentBridge` orchestrator, plus the **canonical `schemas/v1/` + `fixtures/v1/` protocol contract** with a self-verifying conformance test — **full suite green via `node --test`, 0 coupling to Zylos internals**. Next: Phase B — refactor `zylos-openmax` to consume this SDK, then int→prod parity verification (WS keepalive/watchdog focus). See the design doc for the full module map, cut line, wake contract, and migration phasing.
