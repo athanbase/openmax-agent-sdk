@@ -97,3 +97,69 @@ test('syncOwner reads self member then pulls + sets the authoritative owner', as
   assert.equal(out.synced, true);
   assert.deepEqual(out.owner, { member_id: 'owner-new', name: 'Alice' });
 });
+
+test('send puts mentions at the request TOP LEVEL, never inside content.body', async () => {
+  const { http, fetch } = makeClient([ok({ seq: 1 })]);
+  const mentions = [{ type: 'member', member_id: 'm-alice' }];
+  await new CommService(http).send({ conversationId: 'cv1', content: 'hi @Alice', clientMsgId: 'cm3', mentions });
+  const body = fetch.requests[0].body;
+  // cws-core indexes the top-level array; one nested under content.body is
+  // stored as ordinary body data and notifies nobody.
+  assert.deepEqual(body.mentions, mentions);
+  assert.equal(body.content.body.mentions, undefined);
+});
+
+test('send omits the mentions key entirely when there are none', async () => {
+  const { http, fetch } = makeClient([ok(), ok()]);
+  const svc = new CommService(http);
+  await svc.send({ conversationId: 'cv1', content: 'plain', clientMsgId: 'cm4' });
+  await svc.send({ conversationId: 'cv1', content: 'plain', clientMsgId: 'cm5', mentions: [] });
+  assert.ok(!('mentions' in fetch.requests[0].body));
+  assert.ok(!('mentions' in fetch.requests[1].body));
+});
+
+test('conversationMembers returns an array whatever envelope shape comes back', async () => {
+  const roster = [{ member_id: 'm1', display_name: 'Alice' }];
+  for (const payload of [roster, { data: roster }, { members: roster }]) {
+    const { http } = makeClient([ok(payload)]);
+    assert.deepEqual(await new CommService(http).conversationMembers({ conversationId: 'cv1' }), roster);
+  }
+});
+
+test('conversationMembers returns [] rather than undefined on an unrecognized payload', async () => {
+  // Reading `.data` off a bare array yields undefined and iterates zero times —
+  // silently indistinguishable from never having run. Always hand back an array.
+  const { http } = makeClient([ok({ unexpected: true })]);
+  assert.deepEqual(await new CommService(http).conversationMembers({ conversationId: 'cv1' }), []);
+});
+
+test('send keeps top-level mentions when the caller also uses the advanced body override', async () => {
+  // Dropping them here would post a valid-looking message that notifies nobody —
+  // the exact silent failure this parameter exists to prevent.
+  const { http, fetch } = makeClient([ok()]);
+  const mentions = [{ type: 'member', member_id: 'm-alice' }];
+  await new CommService(http).send({
+    conversationId: 'cv1',
+    clientMsgId: 'cm6',
+    body: { type: 'AGENT_TEXT', content: { content_type: 'markdown', body: { text: 'hi @Alice' } } },
+    mentions,
+  });
+  const body = fetch.requests[0].body;
+  assert.deepEqual(body.mentions, mentions);
+  assert.equal(body.content.content_type, 'markdown', 'the override still controls the content');
+});
+
+test('a mentions array inside the advanced body override wins over params.mentions', async () => {
+  const { http, fetch } = makeClient([ok()]);
+  await new CommService(http).send({
+    conversationId: 'cv1',
+    clientMsgId: 'cm7',
+    body: {
+      type: 'AGENT_TEXT',
+      content: { content_type: 'text', body: { text: 'hi' } },
+      mentions: [{ type: 'member', member_id: 'm-from-body' }],
+    },
+    mentions: [{ type: 'member', member_id: 'm-from-params' }],
+  });
+  assert.deepEqual(fetch.requests[0].body.mentions, [{ type: 'member', member_id: 'm-from-body' }]);
+});

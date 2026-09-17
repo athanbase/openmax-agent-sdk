@@ -838,3 +838,32 @@ test('#4: restart with a stale session cursor seeds sync_seq from the ledger ack
 
   await bridge.stop();
 });
+
+test('send() puts structured mentions at the top level of the posted body', async () => {
+  const { http, fetch } = makeHttp([
+    { match: (u, m) => m === 'POST' && /\/conversations\/c6\/messages$/.test(u),
+      data: { id: 'out2' } },
+  ]);
+  const inbound = { deliver: async () => ({ ok: true }) };
+  const { bridge } = makeBridge({ http, orgConfigs: [baseOrg()], inbound });
+
+  const mentions = [{ type: 'member', member_id: 'm-alice' }];
+  await bridge.send('c6', 'hi @Alice', { orgId: 'org1', mentions });
+  const call = fetch.calls.find(c => c.method === 'POST' && /\/conversations\/c6\/messages$/.test(c.url));
+  const body = JSON.parse(call.opts.body);
+  assert.deepEqual(body.mentions, mentions, 'indexed by cws-core only at the top level');
+  assert.equal(body.content.body.mentions, undefined);
+});
+
+test('send() omits mentions when none are given', async () => {
+  const { http, fetch } = makeHttp([
+    { match: (u, m) => m === 'POST' && /\/conversations\/c7\/messages$/.test(u),
+      data: { id: 'out3' } },
+  ]);
+  const inbound = { deliver: async () => ({ ok: true }) };
+  const { bridge } = makeBridge({ http, orgConfigs: [baseOrg()], inbound });
+
+  await bridge.send('c7', 'plain', { orgId: 'org1' });
+  const call = fetch.calls.find(c => c.method === 'POST' && /\/conversations\/c7\/messages$/.test(c.url));
+  assert.ok(!('mentions' in JSON.parse(call.opts.body)));
+});
