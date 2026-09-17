@@ -74,10 +74,12 @@ export function extractMentions(msg) {
 }
 
 /**
- * Detect @<selfName> in the message text body. cws-core's get-message returns
- * raw text with literal "@Name" rather than a structured mentions[] array, so
- * without this fallback the mode=mention gate and the owner-mention bypass
- * would never trigger in practice.
+ * Detect @<selfName> in the message text body. This is a FALLBACK for senders
+ * that emit a plain-text "@Name" with no structured mentions[] — cws-core does
+ * return a structured array on get-message when the sender supplied one (see
+ * `extractMentions` above, and protocol/mention.js for the send side), but a
+ * sender is free to omit it, and historically most did. Without this fallback
+ * the mode=mention gate and the owner-mention bypass would miss those.
  */
 export function isSelfNameMentionedInText(msg, selfName) {
   if (!selfName) return false;

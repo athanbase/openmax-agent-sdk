@@ -891,6 +891,9 @@ export class CwsAgentBridge {
    * @param {string} [opts.orgId]     org to send as (else the client's default org)
    * @param {string} [opts.replyTo]   parent message id (reply)
    * @param {string} [opts.type]      message type (default 'AGENT_TEXT')
+   * @param {Array<{type:string, member_id:string}>} [opts.mentions] structured
+   *        mentions, emitted at the request top level (see protocol/mention.js —
+   *        `content.body` is the wrong place and notifies nobody)
    * @returns {Promise<{messageId: string}>}
    */
   async send(endpoint, content, opts = {}) {
@@ -903,6 +906,7 @@ export class CwsAgentBridge {
       type: opts.type || 'AGENT_TEXT',
       content: { content_type: 'text', body: { text: content }, attachments: [] },
     };
+    if (Array.isArray(opts.mentions) && opts.mentions.length) body.mentions = opts.mentions;
     const replyTo = opts.replyTo || ep.replyTo || ep.parentMessageId;
     if (replyTo) body.parent_id = String(replyTo);
     const res = orgId

@@ -44,8 +44,8 @@ test('recordParticipants dedupes by normalized name and keeps the latest casing'
   await reg.recordParticipants('c1', ['Alice', 'ALICE', '  alice  ']);
   const persisted = JSON.parse(await storage.get('mention-registry.json'));
   // One normalized key "alice"; value is the last-seen trimmed form.
-  assert.deepEqual(Object.keys(persisted.c1), ['alice']);
-  assert.equal(persisted.c1.alice, 'alice');
+  assert.deepEqual(Object.keys(persisted.c1.names), ['alice']);
+  assert.equal(persisted.c1.names.alice, 'alice');
 });
 
 test('recordParticipants ignores empty conversationId and blank names', async () => {
@@ -71,8 +71,8 @@ test('per-conversation name set is capped (oldest evicted)', async () => {
   await reg.recordParticipants('c1', ['One', 'Two', 'Three']);
   const persisted = JSON.parse(await storage.get('mention-registry.json'));
   // Cap=2 keeps the two most-recently inserted; "one" was evicted.
-  assert.equal(Object.keys(persisted.c1).length, 2);
-  assert.deepEqual(Object.keys(persisted.c1), ['two', 'three']);
+  assert.equal(Object.keys(persisted.c1.names).length, 2);
+  assert.deepEqual(Object.keys(persisted.c1.names), ['two', 'three']);
 });
 
 test('a storage write failure never throws out of recordParticipants', async () => {
@@ -88,4 +88,106 @@ test('a name with regex metacharacters is matched literally', async () => {
   const reg = createMentionRegistry({ storage: memoryStorage() });
   await reg.recordParticipants('c1', 'A.B (dev)');
   assert.equal(await reg.resolveMentions('cc @a.b (DEV)', 'c1'), 'cc @A.B (dev)');
+});
+
+// ── recordMembers / resolveOutbound ───────────────────────────────────────────
+
+test('resolveOutbound canonicalizes the text AND emits a structured row for a known member', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'Alice Wong', memberId: 'm-alice' }]);
+  const out = await reg.resolveOutbound('hey @alice wong, look', 'c1');
+  assert.equal(out.text, 'hey @Alice Wong, look');
+  assert.deepEqual(out.mentions, [{ type: 'member', member_id: 'm-alice' }]);
+});
+
+test('resolveOutbound canonicalizes but emits NO row for a name with no member id', async () => {
+  // The notify half needs an id; a name learned from an inbound sender has none.
+  // Highlight still works, which is exactly why this case is invisible in the UI.
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordParticipants('c1', 'Bob');
+  const out = await reg.resolveOutbound('ping @bob', 'c1');
+  assert.equal(out.text, 'ping @Bob');
+  assert.deepEqual(out.mentions, []);
+});
+
+test('resolveOutbound consumes the longest name first, so a shorter participant inside it is not also emitted', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [
+    { displayName: 'Alice', memberId: 'm-short' },
+    { displayName: 'Alice Wong', memberId: 'm-long' },
+  ]);
+  const out = await reg.resolveOutbound('ping @alice wong', 'c1');
+  assert.deepEqual(out.mentions, [{ type: 'member', member_id: 'm-long' }]);
+});
+
+test('resolveOutbound emits one row per member however many times they are mentioned', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'Alice', memberId: 'm-alice' }]);
+  const out = await reg.resolveOutbound('@alice ping @Alice again @ALICE', 'c1');
+  assert.deepEqual(out.mentions, [{ type: 'member', member_id: 'm-alice' }]);
+});
+
+test('resolveOutbound leaves unknown handles, mention-free text and unknown conversations alone', async () => {
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'Alice', memberId: 'm-alice' }]);
+  assert.deepEqual(await reg.resolveOutbound('hi @charlie', 'c1'), { text: 'hi @charlie', mentions: [] });
+  assert.deepEqual(await reg.resolveOutbound('no mention here', 'c1'), { text: 'no mention here', mentions: [] });
+  assert.deepEqual(await reg.resolveOutbound('@alice hi', 'other'), { text: '@alice hi', mentions: [] });
+});
+
+test('resolveOutbound matches a display name containing regex metacharacters literally', async () => {
+  // Names are matched by substring scan, never compiled into a pattern.
+  const reg = createMentionRegistry({ storage: memoryStorage() });
+  await reg.recordMembers('c1', [{ displayName: 'a.b(c)', memberId: 'm-meta' }]);
+  assert.deepEqual((await reg.resolveOutbound('ping @a.b(c)', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-meta' }]);
+  // The metacharacters must not match arbitrary text the way a pattern would.
+  assert.deepEqual((await reg.resolveOutbound('ping @axbxcx', 'c1')).mentions, []);
+});
+
+test('a registry persisted in the legacy flat shape still resolves, and takes member ids on top', async () => {
+  const storage = memoryStorage();
+  // Pre-structured-mentions on-disk shape: { conv: { normName: exactName } }.
+  await storage.set('mention-registry.json', JSON.stringify({ c1: { alice: 'Alice' } }));
+  const reg = createMentionRegistry({ storage });
+  assert.equal(await reg.resolveMentions('hi @ALICE', 'c1'), 'hi @Alice');
+  assert.deepEqual((await reg.resolveOutbound('hi @alice', 'c1')).mentions, []);
+
+  await reg.recordMembers('c1', [{ displayName: 'Alice', memberId: 'm-alice' }]);
+  assert.deepEqual((await reg.resolveOutbound('hi @alice', 'c1')).mentions,
+    [{ type: 'member', member_id: 'm-alice' }]);
+  const persisted = JSON.parse(await storage.get('mention-registry.json'));
+  assert.deepEqual(persisted.c1, { names: { alice: 'Alice' }, ids: { alice: 'm-alice' } });
+});
+
+test('a legacy bucket whose participant is literally called "names" still migrates', async () => {
+  const storage = memoryStorage();
+  await storage.set('mention-registry.json', JSON.stringify({ c1: { names: 'Names' } }));
+  const reg = createMentionRegistry({ storage });
+  assert.equal(await reg.resolveMentions('hi @NAMES', 'c1'), 'hi @Names');
+});
+
+test('eviction drops a name together with its member id', async () => {
+  const storage = memoryStorage();
+  const reg = createMentionRegistry({ storage, maxNamesPerConv: 2 });
+  await reg.recordMembers('c1', [
+    { displayName: 'One', memberId: 'm1' },
+    { displayName: 'Two', memberId: 'm2' },
+    { displayName: 'Three', memberId: 'm3' },
+  ]);
+  const persisted = JSON.parse(await storage.get('mention-registry.json'));
+  assert.deepEqual(Object.keys(persisted.c1.names), ['two', 'three']);
+  // An id left behind for an evicted name would be unreachable state.
+  assert.deepEqual(Object.keys(persisted.c1.ids), ['two', 'three']);
+});
+
+test('recordMembers ignores entries missing a name or an id', async () => {
+  const storage = memoryStorage();
+  const reg = createMentionRegistry({ storage });
+  await reg.recordMembers('c1', [
+    { displayName: 'Alice', memberId: '' },
+    { displayName: '', memberId: 'm-x' },
+    { displayName: '  ', memberId: '  ' },
+  ]);
+  assert.equal(await storage.get('mention-registry.json'), null);
 });

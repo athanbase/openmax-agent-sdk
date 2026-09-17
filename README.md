@@ -63,7 +63,7 @@ const bridge = new CwsAgentBridge({
   reporters: { metrics, metricsIntervalMs, version },
 });
 await bridge.start();         // bootstrap tokens + self-name, open WS pool, arm reporters
-await bridge.send(endpoint, content, { orgId, replyTo });   // outbound reply → cws-core
+await bridge.send(endpoint, content, { orgId, replyTo, mentions });   // outbound reply → cws-core
 await bridge.stop();          // disarm all timers, close every WS + ledger, no leaks
 ```
 
@@ -72,6 +72,31 @@ await bridge.stop();          // disarm all timers, close every WS + ledger, no 
 **Adapter callbacks (seams the SDK never implements):** `loadSession`/`saveSession` (sync cursor), `loadConfig`/`syncSelf` (self-name hydration inputs), `fetchMemberOwner` (sibling-agent DM exemption), `onOwnerBind`/`onOwnerNameHint` (owner hints → config), `onConfigEvent` (`agent.config.*` → **adapter persists**, SDK does not), `onSystemNotice` (policy-gated recall/edit → **adapter formats + delivers**), `onConnectionEvent`/`onChannelEvent` (connection/channel frames → adapter), `onOrgTerminated`/`onAllOrgsTerminated`.
 
 **Still adapter-owned** (behind `InboundDelivery` / callbacks): C4 forwarding + `formatInboundForC4` + work-reference formatting, media download, group-history/context assembly, quoted-message expansion, receive-reactions/typing, `config.json` persistence, pm2 channel install/liveness, auto-upgrade, the argv CLI shells, and dashboard/api-key provisioning. The `orchestrator.js` header block enumerates the full contract.
+
+## Outbound @-mentions
+
+A mention has **two independent halves**, and only one of them is visible:
+
+- **Highlight** is client-side — cws-fe wraps `@<participant display_name>` found in the text. Its candidate list includes the conversation's participants, so plain text alone renders the chip.
+- **Notification** is server-side — driven by a structured `mentions` array at the **top level** of the send request, next to `type`/`content`, **never inside `content.body`**. cws-core indexes that array; it is what wakes a mentioned agent and lights the `unread_mention` badge.
+
+Because the two are independent, **"it looks mentioned" is not evidence that anyone was notified** — text with no structured mention renders exactly as blue as a real one. Verify by reading the top-level `mentions` array back from get-message.
+
+`createMentionRegistry` (`src/protocol/mention.js`) covers both halves:
+
+```js
+// Names learned from inbound senders carry no member id, so a participant who has
+// never spoken cannot be mentioned. Seed ids from the roster — when and how often
+// is the adapter's call.
+const roster = await comm.conversationMembers({ conversationId });   // always an array
+await registry.recordMembers(conversationId,
+  roster.map(m => ({ displayName: m.display_name, memberId: m.member_id })));
+
+const { text, mentions } = await registry.resolveOutbound(raw, conversationId);
+await comm.send({ conversationId, content: text, mentions });        // or bridge.send(ep, text, { mentions })
+```
+
+`resolveMentions(text, conversationId) → string` (canonicalization only) stays as it was. Note the request/response field asymmetry: the request element key is `member_id`, while get-message returns `mentioned_id` — sending `mentioned_id` is rejected with `validation failed`, and the error does not say which field.
 
 ## Protocol contract (canonical, language-neutral)
 

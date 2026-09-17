@@ -40,12 +40,27 @@ function ensureClientMsgId(id) {
  *   - {text} | {body}                     → text/markdown auto-detect
  *   - {content_type, body, attachments?}  → pass-through (advanced)
  *   - already-built {body:{type,content}} → returned as-is (with client_msg_id)
+ *
+ * `params.mentions` (optional) is emitted as the request's top-level `mentions`
+ * array — build it with `createMentionRegistry().resolveOutbound()`.
  */
 function buildSendBody(params) {
-  // Allow advanced caller to override completely.
+  // `mentions` belongs at the TOP LEVEL, next to `type`/`content`: cws-core
+  // indexes it from there to notify the mentioned members. An array nested under
+  // `content.body` is accepted and stored verbatim as body data and notifies
+  // nobody, while reading the message back still shows it — so the wrong
+  // placement looks indistinguishable from the right one. See protocol/mention.js.
+  const mentions = Array.isArray(params.mentions) && params.mentions.length ? params.mentions : null;
+
+  // Allow advanced caller to override completely. `params.mentions` is still
+  // honoured here rather than silently dropped — dropping it would send a
+  // perfectly valid-looking message that notifies nobody, which is the exact
+  // failure this parameter exists to prevent. A `mentions` inside the override
+  // wins, since that branch is the caller taking control of the wire body.
   if (params.body && params.body.content && params.body.type) {
     return {
       client_msg_id: ensureClientMsgId(params.clientMsgId || params.clientMessageId),
+      ...(mentions ? { mentions } : {}),
       ...params.body,
       ...(params.replyTo ? { parent_id: params.replyTo } : {}),
     };
@@ -73,6 +88,7 @@ function buildSendBody(params) {
     client_msg_id: ensureClientMsgId(params.clientMsgId || params.clientMessageId),
     type:          msgType,
     content:       { content_type: contentType, body, attachments },
+    ...(mentions ? { mentions } : {}),
     ...(params.replyTo ? { parent_id: params.replyTo } : {}),
   };
 }
@@ -127,6 +143,29 @@ export class CommService {
 
   getConversation(params = {}) {
     return this.http.get(this._p(`/conversations/${params.conversationId}`));
+  }
+
+  /**
+   * Members of a conversation, ALWAYS as an array.
+   *
+   * Unlike the other reads here this one normalizes the response instead of
+   * handing it back raw. The http client unwraps the D8 envelope, so an
+   * unpaginated response arrives as a BARE ARRAY while a paginated one arrives as
+   * `{data, pagination}` — a caller writing the usual `res.data` gets undefined
+   * for the first shape, iterates zero times and throws nothing, which on disk
+   * and in logs is indistinguishable from the call never having run. All the
+   * shapes are accepted here so no adapter has to learn that the hard way.
+   *
+   * Feeds `createMentionRegistry().recordMembers()`: names learned from inbound
+   * senders carry no member id, so without a roster read a participant who has
+   * never spoken cannot be mentioned.
+   */
+  async conversationMembers(params = {}) {
+    const res = await this.http.get(this._p(`/conversations/${params.conversationId}/members`));
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res?.data)) return res.data;
+    if (Array.isArray(res?.members)) return res.members;
+    return [];
   }
 
   // ---- Messages ------------------------------------------------------------
